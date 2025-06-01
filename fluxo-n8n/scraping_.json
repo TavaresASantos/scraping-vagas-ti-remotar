@@ -1,0 +1,326 @@
+{
+  "name": "scraping-remotar",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "https://programathor.com.br/jobs",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "db9578d1-1fbe-4af2-9ca0-02dff1b06c6f",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "operation": "extractHtmlContent",
+        "extractionValues": {
+          "values": [
+            {
+              "key": "Titulo vaga",
+              "cssSelector": "h3.text-24",
+              "returnArray": true
+            },
+            {
+              "key": "modalidade",
+              "cssSelector": ".cell-list-content-icon span:nth-child(2)",
+              "returnArray": true
+            },
+            {
+              "key": "empresa",
+              "cssSelector": ".cell-list-content-icon span:nth-child(1)",
+              "returnArray": true
+            },
+            {
+              "key": "Tipo empresa",
+              "cssSelector": ".cell-list-content-icon span:nth-child(3)",
+              "returnArray": true
+            },
+            {
+              "key": "salario",
+              "cssSelector": ".cell-list-content-icon span:nth-child(4)",
+              "returnArray": true
+            },
+            {
+              "key": "senioridade",
+              "cssSelector": " .cell-list-content-icon span:nth-child(5)",
+              "returnArray": true
+            },
+            {
+              "key": "modelo",
+              "cssSelector": " .cell-list-content-icon span:nth-child(6)",
+              "returnArray": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1.2,
+      "position": [
+        700,
+        0
+      ],
+      "id": "3f663e14-e1ff-4c6b-9097-b74fa0d53c73",
+      "name": "HTML",
+      "alwaysOutputData": false,
+      "executeOnce": false,
+      "retryOnFail": false
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "binaryPropertyName": "vagas",
+        "options": {
+          "fileName": "vagas-ti.xlsx"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1300,
+        -180
+      ],
+      "id": "e84f5f0f-3197-4000-ac13-2644aa3071c6",
+      "name": "Convert to File"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst result = [];\n\n// Lista de senioridades válidas (sem acentuação, em lowercase)\nconst SENIORIDADES_VALIDAS = [\"senior\", \"pleno\", \"junior\", \"júnior\", \"estagio\", \"estágio\"];\n\nconst seen = new Set();\n\n// Normaliza texto: remove acentos e passa tudo pra lowercase\nfunction normalizarTexto(texto) {\n  return texto\n    .toString()\n    .toLowerCase()\n    .normalize(\"NFD\")\n    .replace(/[\\u0300-\\u036f]/g, \"\");\n}\n\n// Função que, dado um texto bruto, decide se é modelo, senioridade ou salário\nfunction classificarCampo(texto) {\n  const txt = normalizarTexto(texto);\n\n  // verifica CLT ou PJ\n  if (txt.includes(\"clt\")) {\n    return { campo: \"modelo\", valor: \"CLT\" };\n  }\n  if (txt.includes(\"pj\")) {\n    return { campo: \"modelo\", valor: \"PJ\" };\n  }\n\n  // verifica senioridade\n  for (const nivel of SENIORIDADES_VALIDAS) {\n    // “júnior” e “junior” estão na lista\n    if (txt.includes(nivel)) {\n      // retorna com primeira letra maiúscula e resto minusculo\n      const semAcento = nivel.normalize(\"NFD\").replace(/[\\u0300-\\u036f]/g, \"\");\n      const capitalizado = semAcento.charAt(0).toUpperCase() + semAcento.slice(1);\n      return { campo: \"senioridade\", valor: capitalizado };\n    }\n  }\n\n  // verifica salário (contém “r$” ou começa com “até r$” ou “acima de r$”)\n  if (/r\\$/.test(txt) || /^até\\s*r\\$/i.test(txt) || /^acima\\s*de\\s*r\\$/i.test(txt)) {\n    // fica exatamente o texto original (com acentos, “R$” maiúsculo etc.)\n    return { campo: \"salario\", valor: texto };\n  }\n\n  // caso não se enquadre em nenhum, retornamos null\n  return null;\n}\n\nfor (const item of items) {\n  const data = item.json;\n\n  const titulos        = Array.isArray(data[\"Titulo vaga\"])   ? data[\"Titulo vaga\"]   : [];\n  const empresas       = Array.isArray(data[\"empresa\"])       ? data[\"empresa\"]       : [];\n  const modalidades    = Array.isArray(data[\"modalidade\"])    ? data[\"modalidade\"]    : [];\n  const modelos_raw    = Array.isArray(data[\"modelo\"])        ? data[\"modelo\"]        : [];\n  const senioridades_raw = Array.isArray(data[\"senioridade\"]) ? data[\"senioridade\"]   : [];\n  const salarios_raw   = Array.isArray(data[\"salario\"])       ? data[\"salario\"]       : [];\n\n  // O tamanho é o menor size entre todos esses arrays\n  const length = Math.min(\n    titulos.length,\n    empresas.length,\n    modalidades.length,\n    modelos_raw.length,\n    senioridades_raw.length,\n    salarios_raw.length\n  );\n\n  for (let i = 0; i < length; i++) {\n    const titulo_raw      = titulos[i];\n    const empresa_raw     = empresas[i];\n    const modalidade_raw  = modalidades[i];\n    const modelo_texto    = modelos_raw[i]    || \"\";\n    const senioridade_texto = senioridades_raw[i] || \"\";\n    const salario_texto   = salarios_raw[i]   || \"\";\n\n    // Inicializa variáveis vazias\n    let modelo = \"\";\n    let senioridade = \"\";\n    let salario = \"\";\n\n    // classifica o texto de “modelo_raw[i]”\n    const c1 = classificarCampo(modelo_texto);\n    if (c1 && c1.campo === \"modelo\") {\n      modelo = c1.valor;\n    }\n\n    // classifica o texto de “senioridade_raw[i]”\n    const c2 = classificarCampo(senioridade_texto);\n    if (c2) {\n      if (c2.campo === \"modelo\" && !modelo) {\n        // Se o script detectou “PJ” ou “CLT” nesse campo, e ainda não preenchemos “modelo”, usamos aqui\n        modelo = c2.valor;\n      }\n      else if (c2.campo === \"senioridade\" && !senioridade) {\n        senioridade = c2.valor;\n      }\n      else if (c2.campo === \"salario\" && !salario) {\n        salario = c2.valor;\n      }\n    }\n\n    // classifica o texto de “salario_raw[i]”\n    const c3 = classificarCampo(salario_texto);\n    if (c3) {\n      if (c3.campo === \"modelo\" && !modelo) {\n        modelo = c3.valor;\n      }\n      else if (c3.campo === \"senioridade\" && !senioridade) {\n        senioridade = c3.valor;\n      }\n      else if (c3.campo === \"salario\" && !salario) {\n        salario = c3.valor;\n      }\n    }\n\n    // Se ainda nenhum campo foi preenchido (por exemplo, “senioridade” não encontrou nada),\n    // podemos deixar como string vazia ou atribuir alguma default, ex: senioridade = \"—\"\n\n    // Monta a chave única para evitar duplicatas\n    const chave = `${titulo_raw}|${empresa_raw}|${modalidade_raw}|${modelo}|${senioridade}|${salario}`;\n    if (!seen.has(chave)) {\n      seen.add(chave);\n\n      result.push({\n        json: {\n          titulo:       titulo_raw || \"\",\n          empresa:      empresa_raw || \"\",\n          modalidade:   modalidade_raw || \"\",\n          modelo:       modelo,\n          senioridade:  senioridade,\n          salario:      salario\n        }\n      });\n    }\n  }\n}\n\nreturn result;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        0
+      ],
+      "id": "58b23e08-83b8-4343-bc36-d3439446fa49",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1Wj6Mbfe2jEON59H4NjtEahcZYLrQJ24eQNWtG-eWXj0",
+          "mode": "list",
+          "cachedResultName": "vagas-ti",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Wj6Mbfe2jEON59H4NjtEahcZYLrQJ24eQNWtG-eWXj0/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Página1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Wj6Mbfe2jEON59H4NjtEahcZYLrQJ24eQNWtG-eWXj0/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "titulo": "={{ $json.titulo }}",
+            "empresa": "={{ $json.empresa }}",
+            "modalidade": "={{ $json.modalidade }}",
+            "senioridade": "={{ $json.senioridade }}",
+            "modelo": "={{ $json.modelo }}",
+            "salario": "={{ $json.salario }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "titulo",
+              "displayName": "titulo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "empresa",
+              "displayName": "empresa",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "modalidade",
+              "displayName": "modalidade",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "modelo",
+              "displayName": "modelo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "senioridade",
+              "displayName": "senioridade",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "salario",
+              "displayName": "salario",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        1300,
+        120
+      ],
+      "id": "7ccd3aca-486a-4882-8350-118591baf8d6",
+      "name": "Google Sheets",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "2N9GWxwEFu6RXyC7",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9,
+              "triggerAtMinute": 15
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "d865f70d-73c4-4bc1-8a0f-41697ac23aed",
+      "name": "gatilho inicio"
+    },
+    {
+      "parameters": {
+        "sendTo": "tavaresamandasantos@gmail.com",
+        "subject": "trigger acionado",
+        "message": "trigger iniciado",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        220,
+        0
+      ],
+      "id": "fc12f30e-0fd1-4792-a4f8-3beb1a43263d",
+      "name": "Gmail",
+      "webhookId": "f9bf1843-3627-4afa-92e8-d525c6f50116",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "zvBXMQK19jwk1L0l",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTML": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Convert to File",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "gatilho inicio": {
+      "main": [
+        [
+          {
+            "node": "Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "6688950b-263c-472e-a091-b2dbd9f6216b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2c5805ee1d197cca20613e1c6bf7221d9f98f358178e388df79bea205449be47"
+  },
+  "id": "vOENxwGS9BPywvoE",
+  "tags": []
+}
